@@ -2,7 +2,15 @@
 
 A lightweight 3D browser obstacle-racing game built with Three.js.
 
-## Build 5
+## Build 5.2
+
+Character update:
+- 8 original character skins
+- Player skin selector on the main menu
+- Random AI skins
+- Better bean-style bodies with face plates, eyes, arms and feet
+- Accessories including crowns, horns, ears and antennas
+- Simple running animation
 
 Major tournament update:
 - 20-map pool
