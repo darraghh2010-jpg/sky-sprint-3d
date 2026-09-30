@@ -310,9 +310,10 @@ function spawnBots(){
     group.position.copy(pos);BOT_GROUP.add(group);
     bots.push({
       name:BOT_NAMES[i],group,vel:new THREE.Vector3(),grounded:false,alive:true,finished:false,
-      speed:5.4+Math.random()*1.7,difficulty:.55+Math.random()*.38,
+      speed:4.9+Math.random()*1.25,difficulty:.5+Math.random()*.38,
       route:currentInfo.route||[],routeIndex:1,spawn:pos.clone(),jumpCd:Math.random()*.5,
-      think:Math.random()*.7,targetAngle:angle,hitCd:0,stun:0
+      think:Math.random()*.7,targetAngle:angle,hitCd:0,stun:0,
+      safePos:pos.clone(),safeIndex:1,stuck:0,lastProgressZ:pos.z,falls:0
     });
   }
 }
@@ -332,35 +333,82 @@ function botSpinnerHit(bot,dt){
 function eliminateBot(bot){
   if(!bot.alive)return;bot.alive=false;bot.finished=true;bot.group.visible=false;
 }
+function recoverRaceBot(bot,skip=false){
+  const route=bot.route;
+  let idx=Math.max(1,Math.min(bot.safeIndex,route.length-1));
+  if(skip&&idx<route.length-1)idx++;
+  const p=route[idx-1]||route[0];
+  bot.group.position.set(p[0],p[1]+.08,p[2]+.4);
+  bot.vel.set(0,0,0);bot.routeIndex=idx;bot.grounded=false;bot.stuck=0;bot.falls++;
+  bot.safePos=bot.group.position.clone();bot.safeIndex=idx;
+  bot.speed=Math.max(4.7,bot.speed-.08);
+}
 function updateRaceBot(bot,dt){
   if(bot.finished||!bot.alive)return;
+  const route=bot.route;if(!route.length)return;
   bot.jumpCd=Math.max(0,bot.jumpCd-dt);bot.stun=Math.max(0,bot.stun-dt);
   botSpinnerHit(bot,dt);
-  const route=bot.route;
-  if(!route.length)return;
+
+  // Detect actual forward progress. If a bot makes no progress for too long,
+  // recover it to the last route node instead of leaving it trapped forever.
+  if(bot.group.position.z<bot.lastProgressZ-.75){bot.lastProgressZ=bot.group.position.z;bot.stuck=0;}
+  else bot.stuck+=dt;
+  if(bot.stuck>3.6){recoverRaceBot(bot,bot.falls>=2);return;}
+
   const idx=Math.min(bot.routeIndex,route.length-1),p=route[idx];
-  const tx=p[0]+Math.sin((idx+1)*(BOT_NAMES.indexOf(bot.name)+2))*1.15*(1-bot.difficulty*.35),tz=p[2];
+  const laneWave=Math.sin((idx+1)*(BOT_NAMES.indexOf(bot.name)+2))*1.0*(1-bot.difficulty*.3);
+  const tx=p[0]+laneWave,tz=p[2],targetY=p[1];
   let dx=tx-bot.group.position.x,dz=tz-bot.group.position.z,dist=Math.hypot(dx,dz)||1;
-  if(dist<2.1&&bot.routeIndex<route.length-1){bot.routeIndex++;return;}
+
+  if(dist<2.35){
+    bot.safePos.set(p[0],p[1],p[2]);bot.safeIndex=idx;
+    if(bot.routeIndex<route.length-1){bot.routeIndex++;bot.stuck=0;return;}
+  }
+
   dx/=dist;dz/=dist;
-  const desired=bot.speed*(bot.stun>0?.3:1);
-  bot.vel.x=THREE.MathUtils.damp(bot.vel.x,dx*desired,bot.grounded?6.5:2.5,dt);
-  bot.vel.z=THREE.MathUtils.damp(bot.vel.z,dz*desired,bot.grounded?6.5:2.5,dt);
-  const targetY=p[1];
-  const shouldJump=bot.grounded&&bot.jumpCd<=0&&(targetY>bot.group.position.y+.2||dist<7.2||Math.random()<dt*.38*(1-bot.difficulty*.45));
-  if(shouldJump){bot.vel.y=8.7+bot.difficulty*1.1;bot.grounded=false;bot.jumpCd=.7+Math.random()*.35;}
+  const control=bot.grounded?7.5:5.2;
+  const desired=bot.speed*(bot.stun>0?.38:1);
+  bot.vel.x=THREE.MathUtils.damp(bot.vel.x,dx*desired,control,dt);
+  bot.vel.z=THREE.MathUtils.damp(bot.vel.z,dz*desired,control,dt);
+
+  const heightDelta=targetY-bot.group.position.y;
+  const gapJump=dist<10.5&&Math.abs(tz-bot.group.position.z)>4.2;
+  const shouldJump=bot.grounded&&bot.jumpCd<=0&&(heightDelta>.12||gapJump||Math.random()<dt*.12);
+  if(shouldJump){
+    bot.vel.y=9.1+Math.min(1.0,Math.max(0,heightDelta*.38))+bot.difficulty*.45;
+    bot.grounded=false;bot.jumpCd=.62+Math.random()*.25;
+  }
+
+  // Stronger mid-air steering makes jumps reliable without turning bots into
+  // the old on-rails animation.
+  if(!bot.grounded&&dist<12){
+    bot.vel.x=THREE.MathUtils.damp(bot.vel.x,dx*(desired+1.0),7.5,dt);
+    bot.vel.z=THREE.MathUtils.damp(bot.vel.z,dz*(desired+1.0),7.5,dt);
+  }
+
   bot.vel.y+=GRAV*dt;
   const oldY=bot.group.position.y;
   bot.group.position.x+=bot.vel.x*dt;bot.group.position.z+=bot.vel.z*dt;
   const newY=oldY+bot.vel.y*dt,land=botLanding(bot,oldY,newY);
-  if(land!==null){bot.group.position.y=land+HALF;bot.vel.y=0;bot.grounded=true;}else{bot.group.position.y=newY;bot.grounded=false;}
+  if(land!==null){
+    bot.group.position.y=land+HALF;bot.vel.y=0;bot.grounded=true;
+    if(Math.abs(bot.group.position.z-p[2])<4.5){
+      bot.safePos=bot.group.position.clone();bot.safeIndex=Math.max(1,bot.routeIndex);
+    }
+  }else{bot.group.position.y=newY;bot.grounded=false;}
+
   if(Math.abs(bot.vel.x)+Math.abs(bot.vel.z)>.05)bot.group.rotation.y=Math.atan2(bot.vel.x,bot.vel.z)+Math.PI;
-  if(bot.group.position.y<-10){
-    const ri=Math.max(0,botNearestRouteIndex(route,bot.group.position.z)-1),rp=route[ri];
-    bot.group.position.set(rp[0],rp[1],rp[2]);bot.vel.set(0,0,0);bot.routeIndex=Math.min(ri+1,route.length-1);bot.grounded=false;
-    bot.speed=Math.max(5.0,bot.speed-.15);
+
+  if(bot.group.position.y<-9){
+    recoverRaceBot(bot,bot.falls>=2);
+    return;
   }
-  if(finishZone&&bot.group.position.z<finishZone.z&&Math.abs(bot.group.position.x-finishZone.x)<finishZone.width){
+
+  // Final fail-safe: once a bot has fallen several times on the same obstacle,
+  // advance it one nav node so every race can eventually finish.
+  if(bot.falls>=4&&bot.stuck>1.7){recoverRaceBot(bot,true);return;}
+
+  if(finishZone&&bot.group.position.z<finishZone.z&&Math.abs(bot.group.position.x-finishZone.x)<finishZone.width+1.5){
     bot.finished=true;finishOrder.push({type:'bot',bot,time:elapsed});
   }
 }
@@ -408,7 +456,7 @@ function dots(){
 
 function showMenu(){
   overlay.style.display='flex';
-  card.innerHTML='<h1>☁️ SkySprint 3D</h1><p>20 original party-show maps: races, knockout rounds and 4 different finals. Each tournament randomly selects 3 regular rounds + 1 final.</p><button class="btn" id="startBtn">Start Tournament</button><p style="font-size:13px;opacity:.8">Build 5 • 20-map pool • race + survival AI • patterned carnival graphics</p>';
+  card.innerHTML='<h1>☁️ SkySprint 3D</h1><p>20 original party-show maps: races, knockout rounds and 4 different finals. Each tournament randomly selects 3 regular rounds + 1 final.</p><button class="btn" id="startBtn">Start Tournament</button><p style="font-size:13px;opacity:.8">Build 5.1 • reliable AI navigation + recovery</p>';
   document.getElementById('startBtn').onclick=()=>{levelIndex=0;tournamentStarted=true;chooseTournament();loadLevel();};
 }
 
@@ -421,7 +469,7 @@ function showRoundIntro(info){
 
 function showQualified(info){
   overlay.style.display='flex';
-  const last=levelIndex===LEVELS.length-1;
+  const last=levelIndex===3;
   if(last){
     card.innerHTML='<h1>🏆 CHAMPION!</h1>'+dots()+'<p>You won the final in <b>'+fmt(elapsed)+'</b> — <b>1st place</b>.</p><button class="btn" id="againBtn">Play Tournament Again</button><button class="btn alt" id="menuBtn">Main Menu</button>';
     document.getElementById('againBtn').onclick=()=>{levelIndex=0;chooseTournament();loadLevel();};
@@ -554,8 +602,12 @@ function update(dt,time){
   if(currentInfo.mode==='survival'){
     const aliveBots=bots.filter(b=>b.alive).length,totalAlive=aliveBots+1;
     const target=QUALIFY[levelIndex];
-    if((!currentInfo.final&&totalAlive<=target)||elapsed>=currentInfo.duration){
-      finished=true;started=false;centerTitle.textContent=currentInfo.final?'CHAMPION!':'QUALIFIED!';
+    if(!currentInfo.final&&((totalAlive<=target)||elapsed>=currentInfo.duration)){
+      finished=true;started=false;centerTitle.textContent='QUALIFIED!';
+      setTimeout(()=>showQualified(currentInfo),800);cam(dt);return;
+    }
+    if(currentInfo.final&&(aliveBots===0||elapsed>=currentInfo.duration)){
+      finished=true;started=false;centerTitle.textContent='CHAMPION!';
       setTimeout(()=>showQualified(currentInfo),800);cam(dt);return;
     }
   }
