@@ -34,7 +34,7 @@ canvas{display:block;width:100%;height:100%}
 <div id="hud">
   <div class="topbar">
     <div id="roundLabel" class="pill">SkySprint 3D</div>
-    <div id="timer" class="pill">00:00.00</div>
+    <div style="display:flex;gap:8px"><div id="rank" class="pill">1 / 12</div><div id="timer" class="pill">00:00.00</div></div>
   </div>
   <div id="centerTitle"></div>
   <div id="message"></div>
@@ -72,8 +72,13 @@ const sun=new THREE.DirectionalLight(0xffffff,2.7); sun.position.set(24,42,16); 
 const C={pink:0xff4fa3,purple:0x8257e5,cyan:0x35d7ff,yellow:0xffd83d,lime:0x6df56d,navy:0x24346a,white:0xf8fbff,orange:0xff8c42,red:0xff5555,green:0x2ee59d};
 const mat=c=>new THREE.MeshStandardMaterial({color:c,roughness:.72,metalness:.03});
 const WORLD=new THREE.Group(); scene.add(WORLD);
+const BOT_GROUP=new THREE.Group(); scene.add(BOT_GROUP);
 
 let colliders=[],moving=[],spinners=[],checkpoints=[],hazards=[],finishZone=null;
+let bots=[],finishOrder=[],playerPlace=null;
+const BOT_NAMES=['Dash','Nova','Pip','Turbo','Mochi','Ziggy','Bean','Rocket','Bubbles','Noodle','Pixel'];
+const BOT_COLORS=[0xff6b6b,0x6bc5ff,0xffd93d,0x9b5de5,0x50e3c2,0xff8fab,0xffffff,0xff9f1c,0x70d6ff,0xcaffbf,0xf15bb5];
+const QUALIFY=[8,6,4,1];
 let levelIndex=0, tournamentStarted=false, started=false, finished=false, eliminated=false;
 let elapsed=0,last=performance.now(),checkpointIndex=0,cameraYaw=0,countdownToken=0;
 let velocity=new THREE.Vector3(),spawn=new THREE.Vector3(),grounded=false,groundedOn=null,hitCd=0;
@@ -88,6 +93,7 @@ scene.add(player);
 
 const roundLabel=document.getElementById('roundLabel');
 const timer=document.getElementById('timer');
+const rank=document.getElementById('rank');
 const centerTitle=document.getElementById('centerTitle');
 const message=document.getElementById('message');
 const overlay=document.getElementById('overlay');
@@ -152,7 +158,9 @@ function addClouds(maxZ=-150){
 
 function clearWorld(){
   while(WORLD.children.length){const o=WORLD.children.pop();o.traverse(x=>{if(x.geometry)x.geometry.dispose();});}
+  while(BOT_GROUP.children.length){BOT_GROUP.remove(BOT_GROUP.children[0]);}
   colliders=[];moving=[];spinners=[];checkpoints=[];hazards=[];finishZone=null;groundedOn=null;
+  bots=[];finishOrder=[];playerPlace=null;
 }
 
 function levelSkyDash(){
@@ -229,6 +237,97 @@ function levelCrownClimb(){
   return {name:'Crown Climb FINAL',subtitle:'Reach the crown to win the tournament',spawn:new THREE.Vector3(0,1.05,8),par:95,final:true};
 }
 
+const BOT_ROUTES=[
+  [[0,1.05,8],[0,1,-10],[-3.8,1,-27],[3.5,2.3,-37],[-2.8,1.3,-46],[0,1,-59],[-4,1,-78],[4,1.6,-88],[-3,1,-98],[0,1.4,-105],[0,1,-114],[0,2.2,-126],[0,3.2,-138],[0,3.2,-146]],
+  [[0,1.05,8],[0,1,-10],[-4.2,1,-25],[4.2,1.8,-38],[-4.2,1,-51],[0,1,-70],[4.2,1.8,-77],[-4.2,1,-90],[4.2,1.8,-103],[0,1,-116],[0,1,-128],[0,1,-137],[0,2.4,-151],[0,2.4,-158]],
+  [[0,1.05,8],[0,1,-12],[2.5,1,-25],[0,1,-35],[-3,1,-48],[0,1,-56],[0,1.5,-66],[-4,1.5,-76],[4,2.2,-88],[-3,2.8,-100],[0,3.3,-116],[0,3.5,-128],[0,3.8,-137],[0,4.2,-151],[0,4.2,-158]],
+  [[0,1.05,8],[0,1,-10],[-3,1,-28],[3,1.7,-45],[-3,2.4,-62],[3,3.1,-79],[-3,3.8,-96],[3,4.5,-113],[0,5,-126],[0,5.5,-133],[0,7.3,-149],[0,7.3,-157]]
+];
+
+function createBotModel(color){
+  const g=new THREE.Group();
+  const b=new THREE.Mesh(new THREE.CapsuleGeometry(.5,.68,6,12),mat(color));b.position.y=.1;g.add(b);
+  const h=new THREE.Mesh(new THREE.SphereGeometry(.44,16,12),mat(C.white));h.position.y=.82;g.add(h);
+  const visor=new THREE.Mesh(new THREE.BoxGeometry(.46,.15,.05),mat(C.navy));visor.position.set(0,.84,.42);g.add(visor);
+  return g;
+}
+
+function setBotSegment(bot,index){
+  bot.seg=index;
+  bot.segT=0;
+  bot.from=bot.group.position.clone();
+  const p=bot.route[Math.min(index,bot.route.length-1)];
+  bot.to=new THREE.Vector3(p[0]+bot.lane,p[1],p[2]);
+  const dx=bot.to.x-bot.from.x,dz=bot.to.z-bot.from.z;
+  bot.segLen=Math.max(.6,Math.hypot(dx,dz));
+  bot.jumpArc=(bot.segLen>8||Math.abs(bot.to.y-bot.from.y)>.35)?Math.min(3.1,.8+bot.segLen*.11):0;
+}
+
+function spawnBots(){
+  bots=[];finishOrder=[];playerPlace=null;
+  const route=BOT_ROUTES[levelIndex];
+  for(let i=0;i<11;i++){
+    const group=createBotModel(BOT_COLORS[i%BOT_COLORS.length]);
+    const lane=((i%6)-2.5)*1.25;
+    group.position.set(lane,route[0][1],route[0][2]+1.4+Math.floor(i/6)*1.7);
+    BOT_GROUP.add(group);
+    const bot={
+      name:BOT_NAMES[i],group,route,lane:lane*.28,
+      speed:6.5+Math.random()*2.2,difficulty:.7+Math.random()*.3,
+      delay:.15+Math.random()*.65,seg:1,segT:0,segLen:1,from:null,to:null,jumpArc:0,
+      stun:0,hitCd:0,finished:false,finishTime:null
+    };
+    bots.push(bot);setBotSegment(bot,1);
+  }
+}
+
+function botSpinnerHit(bot,dt){
+  bot.hitCd=Math.max(0,bot.hitCd-dt);if(bot.hitCd>0)return;
+  for(const sp of spinners){
+    if(Math.abs(bot.group.position.z-sp.pivot.position.z)<1.35&&Math.abs(bot.group.position.y-sp.y)<2.2){
+      if(Math.random()<dt*(1.2-bot.difficulty*.65)){
+        bot.stun=.35+Math.random()*.55;bot.hitCd=1.2;
+        bot.group.position.x+=Math.random()<.5?-1.5:1.5;
+        return;
+      }
+    }
+  }
+}
+
+function updateBots(dt){
+  if(!started||finished||eliminated)return;
+  for(const bot of bots){
+    if(bot.finished)continue;
+    if(bot.delay>0){bot.delay-=dt;continue;}
+    botSpinnerHit(bot,dt);
+    if(bot.stun>0){bot.stun-=dt;bot.group.rotation.z=Math.sin(performance.now()*.025)*.35;continue;}
+    bot.group.rotation.z=THREE.MathUtils.damp(bot.group.rotation.z,0,10,dt);
+    if(!bot.to)setBotSegment(bot,bot.seg);
+    const prev=bot.group.position.clone();
+    bot.segT+=bot.speed*dt/bot.segLen;
+    const t=Math.min(1,bot.segT),ease=t*t*(3-2*t);
+    bot.group.position.lerpVectors(bot.from,bot.to,ease);
+    if(bot.jumpArc)bot.group.position.y+=Math.sin(Math.PI*t)*bot.jumpArc;
+    const dx=bot.group.position.x-prev.x,dz=bot.group.position.z-prev.z;
+    if(Math.abs(dx)+Math.abs(dz)>.001)bot.group.rotation.y=Math.atan2(dx,dz)+Math.PI;
+    if(t>=1){
+      if(bot.seg>=bot.route.length-1){
+        bot.finished=true;bot.finishTime=elapsed;finishOrder.push({type:'bot',bot,time:elapsed});
+      }else{
+        // Occasional tiny hesitation creates more human-looking variation.
+        if(Math.random()>.72+bot.difficulty*.2)bot.delay=.15+Math.random()*.45;
+        setBotSegment(bot,bot.seg+1);
+      }
+    }
+  }
+}
+
+function updateRank(){
+  if(playerPlace!==null){rank.textContent=playerPlace+' / 12';return;}
+  const ahead=bots.filter(b=>b.finished||b.group.position.z<player.position.z-1.2).length;
+  rank.textContent=(ahead+1)+' / 12';
+}
+
 const LEVELS=[levelSkyDash,levelBounceBridge,levelSpinnerSummit,levelCrownClimb];
 
 function dots(){
@@ -239,14 +338,14 @@ function dots(){
 
 function showMenu(){
   overlay.style.display='flex';
-  card.innerHTML='<h1>☁️ SkySprint 3D</h1><p>A 4-round obstacle tournament. Qualify through three races, then conquer the Crown Climb final.</p><button class="btn" id="startBtn">Start Tournament</button><p style="font-size:13px;opacity:.8">Build 3 • improved collision + moving floors + dive</p>';
+  card.innerHTML='<h1>☁️ SkySprint 3D</h1><p>A 4-round obstacle tournament. Qualify through three races, then conquer the Crown Climb final.</p><button class="btn" id="startBtn">Start Tournament</button><p style="font-size:13px;opacity:.8">Build 4 • 11 AI racers + position-based qualifying</p>';
   document.getElementById('startBtn').onclick=()=>{levelIndex=0;tournamentStarted=true;loadLevel();};
 }
 
 function showRoundIntro(info){
   overlay.style.display='flex';
   const tag=info.final?'FINAL ROUND':'ROUND '+(levelIndex+1);
-  card.innerHTML='<h2>'+tag+'</h2><h1 style="font-size:48px">'+info.name+'</h1>'+dots()+'<p>'+info.subtitle+'</p><p>Target time: <b>'+info.par+' seconds</b></p><button class="btn" id="goBtn">Play Round</button>';
+  card.innerHTML='<h2>'+tag+'</h2><h1 style="font-size:48px">'+info.name+'</h1>'+dots()+'<p>'+info.subtitle+'</p><p><b>'+(info.final?'Finish 1st to win':'Top '+QUALIFY[levelIndex]+' qualify')+'</b> • Time limit: '+info.par+'s</p><button class="btn" id="goBtn">Play Round</button>';
   document.getElementById('goBtn').onclick=()=>{overlay.style.display='none';startCountdown();};
 }
 
@@ -254,18 +353,18 @@ function showQualified(info){
   overlay.style.display='flex';
   const last=levelIndex===LEVELS.length-1;
   if(last){
-    card.innerHTML='<h1>🏆 CHAMPION!</h1>'+dots()+'<p>You conquered the final in <b>'+fmt(elapsed)+'</b>.</p><button class="btn" id="againBtn">Play Tournament Again</button><button class="btn alt" id="menuBtn">Main Menu</button>';
+    card.innerHTML='<h1>🏆 CHAMPION!</h1>'+dots()+'<p>You won the final in <b>'+fmt(elapsed)+'</b> — <b>1st place</b>.</p><button class="btn" id="againBtn">Play Tournament Again</button><button class="btn alt" id="menuBtn">Main Menu</button>';
     document.getElementById('againBtn').onclick=()=>{levelIndex=0;loadLevel();};
     document.getElementById('menuBtn').onclick=showMenu;
   }else{
-    card.innerHTML='<h1>✅ QUALIFIED!</h1>'+dots()+'<p>'+info.name+' cleared in <b>'+fmt(elapsed)+'</b>.</p><button class="btn" id="nextBtn">Next Round</button>';
+    card.innerHTML='<h1>✅ QUALIFIED!</h1>'+dots()+'<p>You finished <b>#'+playerPlace+'</b> in '+fmt(elapsed)+'.</p><button class="btn" id="nextBtn">Next Round</button>';
     document.getElementById('nextBtn').onclick=()=>{levelIndex++;loadLevel();};
   }
 }
 
 function showEliminated(info){
   overlay.style.display='flex';
-  card.innerHTML='<h1>❌ ELIMINATED</h1>'+dots()+'<p>You ran out of time on '+info.name+'.</p><button class="btn" id="retryBtn">Retry Round</button><button class="btn alt" id="menuBtn">Main Menu</button>';
+  card.innerHTML='<h1>❌ ELIMINATED</h1>'+dots()+'<p>'+(playerPlace?'You finished <b>#'+playerPlace+'</b>, outside the qualifying spots.':'You ran out of time on '+info.name+'.')+'</p><button class="btn" id="retryBtn">Retry Round</button><button class="btn alt" id="menuBtn">Main Menu</button>';
   document.getElementById('retryBtn').onclick=()=>loadLevel();
   document.getElementById('menuBtn').onclick=showMenu;
 }
@@ -277,6 +376,7 @@ function loadLevel(){
   timer.textContent='00:00.00';centerTitle.textContent='';message.style.opacity=0;
   const info=LEVELS[levelIndex]();
   currentInfo=info; spawn.copy(info.spawn); player.position.copy(spawn); grounded=false;
+  spawnBots();rank.textContent='1 / 12';
   roundLabel.textContent=(info.final?'FINAL • ':'Round '+(levelIndex+1)+' • ')+info.name;
   camera.position.set(0,6,15); camera.lookAt(player.position);
   showRoundIntro(info);
@@ -376,7 +476,7 @@ function update(dt,time){
   player.rotation.x=THREE.MathUtils.damp(player.rotation.x,diving?-.95:0,12,dt);
   if(!started||finished||eliminated){cam(dt);return;}
 
-  elapsed+=dt;timer.textContent=fmt(elapsed);
+  elapsed+=dt;timer.textContent=fmt(elapsed);updateBots(dt);updateRank();
   if(elapsed>currentInfo.par){
     eliminated=true;started=false;centerTitle.textContent='TIME!';setTimeout(()=>showEliminated(currentInfo),700);cam(dt);return;
   }
@@ -432,8 +532,11 @@ function update(dt,time){
   if(player.position.y<-10)respawn();
 
   if(finishZone&&player.position.z<finishZone.z&&Math.abs(player.position.x-finishZone.x)<finishZone.width&&player.position.y>finishZone.minY){
-    finished=true;started=false;centerTitle.textContent=currentInfo.final?'CROWN!':'QUALIFIED!';
-    setTimeout(()=>showQualified(currentInfo),850);
+    playerPlace=finishOrder.length+1;finishOrder.push({type:'player',time:elapsed});updateRank();
+    finished=true;started=false;
+    const qualified=playerPlace<=QUALIFY[levelIndex];
+    centerTitle.textContent=qualified?(currentInfo.final?'CROWN!':'QUALIFIED!'):'ELIMINATED';
+    setTimeout(()=>qualified?showQualified(currentInfo):showEliminated(currentInfo),850);
   }
   cam(dt);
 }
