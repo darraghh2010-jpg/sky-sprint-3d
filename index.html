@@ -22,10 +22,10 @@ canvas{display:block;width:100%;height:100%}
 #roundDots{display:flex;justify-content:center;gap:8px;margin:18px 0}.dot{width:13px;height:13px;border-radius:50%;background:#ffffff35}.dot.on{background:white}.dot.done{background:#6df56d}
 #mobile{position:fixed;inset:0;z-index:10;pointer-events:none;display:none}
 .dpad{position:absolute;left:18px;bottom:18px;width:156px;height:156px;pointer-events:auto}
-.dpad button,.jump{position:absolute;border:0;background:#111827c4;color:#fff;border:1px solid #ffffff38;font-weight:900}
+.dpad button,.jump,.dive{position:absolute;border:0;background:#111827c4;color:#fff;border:1px solid #ffffff38;font-weight:900}
 .dpad button{width:52px;height:52px;border-radius:16px;font-size:22px}
 .dpad .up{left:52px}.dpad .left{left:0;top:52px}.dpad .down{left:52px;top:104px}.dpad .right{left:104px;top:52px}
-.jump{right:24px;bottom:34px;width:92px;height:92px;border-radius:50%;font-size:18px;pointer-events:auto}
+.jump,.dive{bottom:34px;width:86px;height:86px;border-radius:50%;font-size:16px;pointer-events:auto}.jump{right:22px}.dive{right:118px;background:#8257e5d8}
 .pressed{transform:scale(.92);background:#ffffffd8!important;color:#111827!important}
 @media(pointer:coarse),(max-width:800px){#mobile{display:block}#help{display:none}.topbar{padding:10px}.pill{padding:8px 10px}}
 </style>
@@ -38,7 +38,7 @@ canvas{display:block;width:100%;height:100%}
   </div>
   <div id="centerTitle"></div>
   <div id="message"></div>
-  <div id="help">WASD / arrows move • Space jump • drag or Q/E rotate • R respawn</div>
+  <div id="help">WASD / arrows move • Space jump • Shift/F dive • drag or Q/E rotate • R respawn</div>
 </div>
 
 <div id="overlay">
@@ -49,7 +49,7 @@ canvas{display:block;width:100%;height:100%}
   <div class="dpad">
     <button class="up">▲</button><button class="left">◀</button><button class="down">▼</button><button class="right">▶</button>
   </div>
-  <button class="jump">JUMP</button>
+  <button class="dive">DIVE</button><button class="jump">JUMP</button>
 </div>
 
 <script type="module">
@@ -76,8 +76,9 @@ const WORLD=new THREE.Group(); scene.add(WORLD);
 let colliders=[],moving=[],spinners=[],checkpoints=[],hazards=[],finishZone=null;
 let levelIndex=0, tournamentStarted=false, started=false, finished=false, eliminated=false;
 let elapsed=0,last=performance.now(),checkpointIndex=0,cameraYaw=0,countdownToken=0;
-let velocity=new THREE.Vector3(),spawn=new THREE.Vector3(),grounded=false,hitCd=0;
-const HALF=.95,GRAV=-25,SPEED=8.5,AIR=.58,JUMP=10.5;
+let velocity=new THREE.Vector3(),spawn=new THREE.Vector3(),grounded=false,groundedOn=null,hitCd=0;
+let diving=false,diveTimer=0,diveCooldown=0;
+const HALF=.95,RADIUS=.52,GRAV=-25,SPEED=8.5,AIR=.58,JUMP=10.5,DIVE_SPEED=12.2;
 
 const player=new THREE.Group();
 const body=new THREE.Mesh(new THREE.CapsuleGeometry(.55,.75,7,14),mat(0xffefad)); body.position.y=.12; player.add(body);
@@ -92,11 +93,11 @@ const message=document.getElementById('message');
 const overlay=document.getElementById('overlay');
 const card=document.getElementById('card');
 
-const keys={},mobile={up:false,down:false,left:false,right:false,jump:false};
+const keys={},mobile={up:false,down:false,left:false,right:false,jump:false,dive:false};
 addEventListener('keydown',e=>{keys[e.code]=true;if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();if(e.code==='KeyR'&&started&&!finished)respawn();});
 addEventListener('keyup',e=>keys[e.code]=false);
 
-[['.up','up'],['.down','down'],['.left','left'],['.right','right'],['.jump','jump']].forEach(pair=>{
+[['.up','up'],['.down','down'],['.left','left'],['.right','right'],['.jump','jump'],['.dive','dive']].forEach(pair=>{
   const el=document.querySelector(pair[0]), key=pair[1];
   el.addEventListener('pointerdown',e=>{e.preventDefault();mobile[key]=true;el.classList.add('pressed')});
   ['pointerup','pointercancel','pointerleave'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();mobile[key]=false;el.classList.remove('pressed')}));
@@ -127,7 +128,7 @@ function box(x,y,z,w,h,d,color=C.cyan,collider=true){
 }
 
 function platform(x,z,w,d,color,y=0,h=1){ return box(x,y-h/2,z,w,h,d,color,true); }
-function rail(x,y,z,w,h,d,color=C.white){ return box(x,y,z,w,h,d,color,false); }
+function rail(x,y,z,w,h,d,color=C.white){ return box(x,y,z,w,h,d,color,true); }
 
 function spinner(x,z,len,speed,color=C.orange,y=1.05){
   const pivot=new THREE.Group(); pivot.position.set(x,y,z);
@@ -151,7 +152,7 @@ function addClouds(maxZ=-150){
 
 function clearWorld(){
   while(WORLD.children.length){const o=WORLD.children.pop();o.traverse(x=>{if(x.geometry)x.geometry.dispose();});}
-  colliders=[];moving=[];spinners=[];checkpoints=[];hazards=[];finishZone=null;
+  colliders=[];moving=[];spinners=[];checkpoints=[];hazards=[];finishZone=null;groundedOn=null;
 }
 
 function levelSkyDash(){
@@ -164,8 +165,9 @@ function levelSkyDash(){
   moving.push({mesh:mp1,axis:'x',base:-4,amp:4.8,speed:1.35,phase:0},{mesh:mp2,axis:'x',base:4,amp:4.8,speed:1.55,phase:1.8},{mesh:mp3,axis:'x',base:-3,amp:4.3,speed:1.7,phase:3.1});
   platform(0,-111,11,17,C.cyan); spinner(0,-112,9,-2.15,C.pink);
   platform(0,-126,11,13,C.yellow,1.2); platform(0,-138,18,12,C.pink,2.2);
-  arch(-49,.3); arch(-103);
-  checkpoints.push({z:-49,spawn:new THREE.Vector3(0,1.35,-52),idx:1},{z:-103,spawn:new THREE.Vector3(0,1.4,-106),idx:2});
+  platform(0,-49,11,7,C.lime,.3); arch(-49,.3);
+  platform(0,-103,11,7,C.lime,.4); arch(-103,.4);
+  checkpoints.push({z:-49,x:0,width:6,minY:-1,spawn:new THREE.Vector3(0,1.3,-51),idx:1},{z:-103,x:0,width:6,minY:-1,spawn:new THREE.Vector3(0,1.4,-105),idx:2});
   rail(-7,5,-143,1.2,7,1.2); rail(7,5,-143,1.2,7,1.2); rail(0,8.2,-143,15,1.4,1.4);
   finishZone={z:-142,x:0,width:9,minY:1};
   return {name:'Sky Dash',subtitle:'Classic obstacle sprint',spawn:new THREE.Vector3(0,1.05,8),par:75};
@@ -183,8 +185,9 @@ function levelBounceBridge(){
   platform(0,-116,23,18,C.purple); spinner(0,-116,19,2.05,C.yellow);
   platform(0,-135,9,15,C.cyan);
   platform(0,-151,18,12,C.green,1.4);
-  arch(-70,0,C.white); arch(-126,0,C.lime);
-  checkpoints.push({z:-70,spawn:new THREE.Vector3(0,1.15,-74),idx:1},{z:-126,spawn:new THREE.Vector3(0,1.15,-130),idx:2});
+  platform(0,-70,12,8,C.white,0); arch(-70,0,C.white);
+  platform(0,-126,12,8,C.lime,0); arch(-126,0,C.lime);
+  checkpoints.push({z:-70,x:0,width:7,minY:-1,spawn:new THREE.Vector3(0,1.0,-72),idx:1},{z:-126,x:0,width:7,minY:-1,spawn:new THREE.Vector3(0,1.0,-128),idx:2});
   rail(-7,4.5,-156,1,7,1,C.white); rail(7,4.5,-156,1,7,1,C.white); rail(0,7.8,-156,15,1.2,1,C.white);
   finishZone={z:-155,x:0,width:9,minY:.5};
   return {name:'Bounce Bridge',subtitle:'Moving islands and risky jumps',spawn:new THREE.Vector3(0,1.05,8),par:82};
@@ -199,8 +202,9 @@ function levelSpinnerSummit(){
   platform(-4,-76,7,9,C.cyan,.5); platform(4,-88,7,9,C.purple,1.2); platform(-3,-100,7,9,C.pink,1.8);
   platform(0,-116,16,16,C.cyan,2.3); spinner(0,-116,13,-2.8,C.yellow,3.3);
   platform(0,-135,12,18,C.green,2.8); platform(0,-151,18,12,C.pink,3.2);
-  arch(-66,.2); arch(-126,2.1);
-  checkpoints.push({z:-66,spawn:new THREE.Vector3(0,1.3,-70),idx:1},{z:-126,spawn:new THREE.Vector3(0,3.35,-130),idx:2});
+  platform(0,-66,12,8,C.lime,.5); arch(-66,.5);
+  platform(0,-126,12,8,C.lime,2.5); arch(-126,2.5);
+  checkpoints.push({z:-66,x:0,width:7,minY:0,spawn:new THREE.Vector3(0,1.5,-68),idx:1},{z:-126,x:0,width:7,minY:1.5,spawn:new THREE.Vector3(0,3.5,-128),idx:2});
   finishZone={z:-155,x:0,width:10,minY:2};
   return {name:'Spinner Summit',subtitle:'Fast hazards and climbing jumps',spawn:new THREE.Vector3(0,1.05,8),par:88};
 }
@@ -218,7 +222,9 @@ function levelCrownClimb(){
   platform(0,-149,12,14,C.yellow,6.3);
   rail(-6,10,-157,1.2,8,1.2,C.white); rail(6,10,-157,1.2,8,1.2,C.white); rail(0,13.5,-157,13,1.2,1.2,C.white);
   const crown=new THREE.Mesh(new THREE.ConeGeometry(1.8,2.3,5),mat(0xffd700)); crown.position.set(0,9,-154); crown.rotation.x=Math.PI; WORLD.add(crown);
-  checkpoints.push({z:-78,spawn:new THREE.Vector3(0,3.25,-82),idx:1},{z:-128,spawn:new THREE.Vector3(0,5.55,-132),idx:2});
+  arch(-79,2.1,C.lime);
+  platform(0,-126,13,9,C.lime,4.0); arch(-126,4.0,C.lime);
+  checkpoints.push({z:-79,x:0,width:8,minY:1.2,spawn:new THREE.Vector3(0,3.05,-82),idx:1},{z:-126,x:0,width:8,minY:3.0,spawn:new THREE.Vector3(0,4.95,-129),idx:2});
   finishZone={z:-153,x:0,width:5,minY:5};
   return {name:'Crown Climb FINAL',subtitle:'Reach the crown to win the tournament',spawn:new THREE.Vector3(0,1.05,8),par:95,final:true};
 }
@@ -233,7 +239,7 @@ function dots(){
 
 function showMenu(){
   overlay.style.display='flex';
-  card.innerHTML='<h1>☁️ SkySprint 3D</h1><p>A 4-round obstacle tournament. Qualify through three races, then conquer the Crown Climb final.</p><button class="btn" id="startBtn">Start Tournament</button><p style="font-size:13px;opacity:.8">Build 2 • keyboard + mobile controls</p>';
+  card.innerHTML='<h1>☁️ SkySprint 3D</h1><p>A 4-round obstacle tournament. Qualify through three races, then conquer the Crown Climb final.</p><button class="btn" id="startBtn">Start Tournament</button><p style="font-size:13px;opacity:.8">Build 3 • improved collision + moving floors + dive</p>';
   document.getElementById('startBtn').onclick=()=>{levelIndex=0;tournamentStarted=true;loadLevel();};
 }
 
@@ -288,17 +294,46 @@ function startCountdown(){
 }
 
 function respawn(){
-  player.position.copy(spawn); velocity.set(0,0,0); grounded=false;
+  player.position.copy(spawn); velocity.set(0,0,0); grounded=false;groundedOn=null;diving=false;diveTimer=0;player.rotation.x=0;
 }
 
 function landing(oldY,newY){
-  const old=oldY-HALF,nw=newY-HALF; let best=null;
+  const old=oldY-HALF,nw=newY-HALF; let best=null,bestCollider=null;
   for(const c of colliders){
     const top=c.mesh.position.y+c.h/2;
-    const inside=Math.abs(player.position.x-c.mesh.position.x)<c.w/2+.34&&Math.abs(player.position.z-c.mesh.position.z)<c.d/2+.34;
-    if(inside&&velocity.y<=0&&old>=top-.08&&nw<=top+.18&&(best===null||top>best))best=top;
+    const inside=Math.abs(player.position.x-c.mesh.position.x)<c.w/2+RADIUS*.65&&Math.abs(player.position.z-c.mesh.position.z)<c.d/2+RADIUS*.65;
+    if(inside&&velocity.y<=0&&old>=top-.1&&nw<=top+.2&&(best===null||top>best)){best=top;bestCollider=c;}
   }
-  return best;
+  return best===null?null:{top:best,collider:bestCollider};
+}
+
+function ceilingHit(oldY,newY){
+  if(velocity.y<=0)return null;
+  const oldTop=oldY+HALF,newTop=newY+HALF;
+  for(const c of colliders){
+    const bottom=c.mesh.position.y-c.h/2;
+    const inside=Math.abs(player.position.x-c.mesh.position.x)<c.w/2+RADIUS*.7&&Math.abs(player.position.z-c.mesh.position.z)<c.d/2+RADIUS*.7;
+    if(inside&&oldTop<=bottom+.08&&newTop>=bottom-.08)return bottom-HALF-.03;
+  }
+  return null;
+}
+
+function moveAxis(axis,amount){
+  if(!amount)return;
+  player.position[axis]+=amount;
+  const other=axis==='x'?'z':'x';
+  for(const c of colliders){
+    const top=c.mesh.position.y+c.h/2,bottom=c.mesh.position.y-c.h/2;
+    const pBottom=player.position.y-HALF+.04,pTop=player.position.y+HALF;
+    if(pBottom>=top-.04||pTop<=bottom+.04)continue;
+    const halfAxis=(axis==='x'?c.w:c.d)/2,halfOther=(other==='x'?c.w:c.d)/2;
+    if(Math.abs(player.position[other]-c.mesh.position[other])>=halfOther+RADIUS)continue;
+    const delta=player.position[axis]-c.mesh.position[axis];
+    if(Math.abs(delta)<halfAxis+RADIUS){
+      player.position[axis]=c.mesh.position[axis]+(amount>0?-(halfAxis+RADIUS):(halfAxis+RADIUS));
+      if(axis==='x')velocity.x=0;else velocity.z=0;
+    }
+  }
 }
 
 function segDist(px,pz,ax,az,bx,bz){
@@ -330,10 +365,15 @@ function cam(dt){
 
 function update(dt,time){
   for(const m of moving){
+    const old=m.mesh.position[m.axis];
     const val=m.base+Math.sin(time*m.speed+m.phase)*m.amp;
-    if(m.axis==='x')m.mesh.position.x=val; else m.mesh.position.z=val;
+    m.mesh.position[m.axis]=val;
+    const delta=val-old;
+    if(grounded&&groundedOn&&groundedOn.mesh===m.mesh)moveAxis(m.axis,delta);
   }
   for(const s of spinners)s.pivot.rotation.y+=s.speed*dt;
+  diveCooldown=Math.max(0,diveCooldown-dt);diveTimer=Math.max(0,diveTimer-dt);if(diving&&diveTimer<=0)diving=false;
+  player.rotation.x=THREE.MathUtils.damp(player.rotation.x,diving?-.95:0,12,dt);
   if(!started||finished||eliminated){cam(dt);return;}
 
   elapsed+=dt;timer.textContent=fmt(elapsed);
@@ -347,6 +387,14 @@ function update(dt,time){
   fwd.set(-Math.sin(cameraYaw),0,-Math.cos(cameraYaw));
   right.set(Math.cos(cameraYaw),0,-Math.sin(cameraYaw));
   desired.set(0,0,0).addScaledVector(fwd,fw).addScaledVector(right,st);
+
+  const divePressed=keys.ShiftLeft||keys.ShiftRight||keys.KeyF||mobile.dive;
+  if(divePressed&&!update.diveLock&&diveCooldown<=0){
+    const dir=desired.lengthSq()?desired.clone().normalize():fwd.clone().normalize();
+    velocity.x=dir.x*DIVE_SPEED;velocity.z=dir.z*DIVE_SPEED;velocity.y=grounded?5.4:Math.max(3.1,velocity.y);
+    grounded=false;groundedOn=null;diving=true;diveTimer=.48;diveCooldown=.85;update.diveLock=true;flash('DIVE!');
+  }
+  if(!divePressed)update.diveLock=false;
 
   if(desired.lengthSq()){
     desired.normalize(); const ctl=grounded?1:AIR;
@@ -364,14 +412,19 @@ function update(dt,time){
 
   velocity.y+=GRAV*dt;
   const oldY=player.position.y;
-  player.position.x+=velocity.x*dt;player.position.z+=velocity.z*dt;
-  const newY=player.position.y+velocity.y*dt,land=landing(oldY,newY);
-  if(land!==null){player.position.y=land+HALF;velocity.y=0;grounded=true;}else{player.position.y=newY;grounded=false;}
+  moveAxis('x',velocity.x*dt);moveAxis('z',velocity.z*dt);
+  const newY=player.position.y+velocity.y*dt;
+  const ceil=ceilingHit(oldY,newY),land=landing(oldY,newY);
+  if(ceil!==null){player.position.y=ceil;velocity.y=0;grounded=false;groundedOn=null;}
+  else if(land!==null){player.position.y=land.top+HALF;velocity.y=0;grounded=true;groundedOn=land.collider;if(diving&&diveTimer<.25)diving=false;}
+  else{player.position.y=newY;grounded=false;groundedOn=null;}
 
   handleHits(dt);
 
   for(const cp of checkpoints){
-    if(cp.idx>checkpointIndex&&player.position.z<cp.z){
+    const inLane=Math.abs(player.position.x-(cp.x||0))<(cp.width||7);
+    const highEnough=player.position.y>(cp.minY??-2);
+    if(cp.idx>checkpointIndex&&player.position.z<cp.z&&inLane&&highEnough){
       checkpointIndex=cp.idx;spawn.copy(cp.spawn);flash('Checkpoint '+cp.idx+'!');
     }
   }
