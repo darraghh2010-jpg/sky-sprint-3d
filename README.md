@@ -2,7 +2,18 @@
 
 A lightweight 3D browser obstacle-racing game built with Three.js.
 
-## Build 4
+## Build 5
+
+Major tournament update:
+- 20-map pool
+- 16 regular maps (race + survival/knockout)
+- 4 finals
+- Random 4-round tournaments
+- 12 → 8 → 6 → 4 participant curve
+- Physics-based race bots that steer, jump, fall and respawn
+- Survival bots that try to stay away from arena edges and hazards
+- Patterned carnival-style platform materials instead of flat solid-color floors
+- Knockout rounds with shrinking survivor counts
 The game now has a full tournament flow:
 
 - Main menu
