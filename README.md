@@ -2,7 +2,7 @@
 
 A lightweight 3D browser obstacle-racing game built with Three.js.
 
-## Build 2
+## Build 3
 The game now has a full tournament flow:
 
 - Main menu
@@ -17,10 +17,15 @@ The game now has a full tournament flow:
 - Moving platforms and rotating knockback hazards
 - Keyboard and mobile controls
 - Champion screen after winning the final
+- Solid side and underside collision on platforms/rails
+- Moving platforms carry the player while standing on them
+- Grounded checkpoint pads so checkpoints are never floating over gaps
+- Dive move: Shift/F on keyboard or DIVE on mobile
 
 ## Controls
 - WASD / Arrow keys: move
 - Space: jump
+- Shift or F: dive
 - Q / E or drag: rotate camera
 - R: respawn at latest checkpoint
 - Mobile: on-screen movement buttons + jump; drag the game view to rotate the camera
