@@ -18,7 +18,7 @@ canvas{display:block;width:100%;height:100%}
 .card{width:min(700px,94vw);background:#111827dc;color:#fff;border:1px solid #ffffff25;border-radius:30px;padding:28px;box-shadow:0 30px 80px #0006;text-align:center;backdrop-filter:blur(18px)}
 .card h1{font-size:clamp(38px,8vw,72px);margin:0 0 8px}.card h2{font-size:clamp(28px,6vw,50px);margin:0 0 10px}.card p{font-size:16px;line-height:1.5;color:#e5e7eb}
 .btn{border:0;border-radius:18px;padding:14px 22px;font-size:18px;font-weight:1000;background:#fff;color:#111827;cursor:pointer;margin:8px}
-.btn.alt{background:#ffffff24;color:white;border:1px solid #ffffff35}
+.btn.alt{background:#ffffff24;color:white;border:1px solid #ffffff35}.skinrow{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin:16px 0}.skinrow select{background:#ffffff18;color:#fff;border:1px solid #ffffff35;border-radius:14px;padding:10px 14px;font-weight:900;font-size:15px}.skinrow option{color:#111827}
 #roundDots{display:flex;justify-content:center;gap:8px;margin:18px 0}.dot{width:13px;height:13px;border-radius:50%;background:#ffffff35}.dot.on{background:white}.dot.done{background:#6df56d}
 #mobile{position:fixed;inset:0;z-index:10;pointer-events:none;display:none}
 .dpad{position:absolute;left:18px;bottom:18px;width:156px;height:156px;pointer-events:auto}
@@ -90,6 +90,17 @@ let colliders=[],moving=[],spinners=[],checkpoints=[],hazards=[],finishZone=null
 let bots=[],finishOrder=[],playerPlace=null;
 const BOT_NAMES=['Dash','Nova','Pip','Turbo','Mochi','Ziggy','Bean','Rocket','Bubbles','Noodle','Pixel'];
 const BOT_COLORS=[0xff6b6b,0x6bc5ff,0xffd93d,0x9b5de5,0x50e3c2,0xff8fab,0xffffff,0xff9f1c,0x70d6ff,0xcaffbf,0xf15bb5];
+const SKINS=[
+ {name:'Bubble Pop',a:0xff4fa3,b:0x35d7ff,accent:0xffffff,pattern:'stripe',hat:'none'},
+ {name:'Star Spark',a:0x33246f,b:0x8257e5,accent:0xffd83d,pattern:'stars',hat:'antenna'},
+ {name:'Bumble Bean',a:0xffd83d,b:0x232323,accent:0xffffff,pattern:'bands',hat:'antenna'},
+ {name:'Mint Chip',a:0x50e3c2,b:0x173f4f,accent:0xffffff,pattern:'dots',hat:'none'},
+ {name:'Lava Pop',a:0xff554d,b:0xff9f1c,accent:0x341313,pattern:'flame',hat:'horns'},
+ {name:'Frost Bite',a:0x9cecff,b:0xffffff,accent:0x24346a,pattern:'ice',hat:'horns'},
+ {name:'Royal Jelly',a:0x8257e5,b:0xffd83d,accent:0xffffff,pattern:'split',hat:'crown'},
+ {name:'Neon Ninja',a:0x20203a,b:0x6df56d,accent:0xff4fa3,pattern:'slash',hat:'ears'}
+];
+let selectedSkin=0;
 const QUALIFY=[8,6,4,1],BOT_COUNT=[11,7,5,3];
 let levelIndex=0, tournamentStarted=false, started=false, finished=false, eliminated=false;
 let elapsed=0,last=performance.now(),checkpointIndex=0,cameraYaw=0,countdownToken=0;
@@ -98,10 +109,58 @@ let diving=false,diveTimer=0,diveCooldown=0;
 const HALF=.95,RADIUS=.52,GRAV=-25,SPEED=8.5,AIR=.58,JUMP=10.5,DIVE_SPEED=12.2;
 
 const player=new THREE.Group();
-const body=new THREE.Mesh(new THREE.CapsuleGeometry(.55,.75,7,14),mat(0xffefad)); body.position.y=.12; player.add(body);
-const head=new THREE.Mesh(new THREE.SphereGeometry(.49,20,16),mat(C.white)); head.position.y=.88; player.add(head);
-const face=new THREE.Mesh(new THREE.BoxGeometry(.52,.18,.06),mat(C.navy)); face.position.set(0,.9,.46); player.add(face);
 scene.add(player);
+
+function skinTexture(skin){
+  const cv=document.createElement('canvas');cv.width=cv.height=128;const x=cv.getContext('2d');
+  x.fillStyle=cssHex(skin.a);x.fillRect(0,0,128,128);
+  x.fillStyle=cssHex(skin.b);
+  if(skin.pattern==='stripe'){for(let i=-80;i<220;i+=38){x.save();x.translate(i,0);x.rotate(-.55);x.fillRect(0,-50,18,230);x.restore();}}
+  else if(skin.pattern==='bands'){for(let y=12;y<128;y+=34)x.fillRect(0,y,128,16);}
+  else if(skin.pattern==='dots'){for(let y=18;y<128;y+=32)for(let xx=18;xx<128;xx+=32){x.beginPath();x.arc(xx,y,8,0,Math.PI*2);x.fill();}}
+  else if(skin.pattern==='stars'){for(let i=0;i<18;i++){const px=(i*47)%128,py=(i*73)%128;x.beginPath();x.arc(px,py,3+(i%3),0,Math.PI*2);x.fill();}}
+  else if(skin.pattern==='flame'){for(let i=0;i<7;i++){x.beginPath();x.moveTo(i*22,128);x.quadraticCurveTo(i*22+11,58+(i%2)*22,i*22+22,128);x.fill();}}
+  else if(skin.pattern==='ice'){for(let i=0;i<7;i++){x.beginPath();x.moveTo(i*22,0);x.lineTo(i*22+11,32+(i%2)*16);x.lineTo(i*22+22,0);x.fill();}}
+  else if(skin.pattern==='split'){x.fillRect(64,0,64,128);}
+  else if(skin.pattern==='slash'){x.save();x.translate(18,-20);x.rotate(-.55);x.fillRect(0,0,25,190);x.restore();}
+  const tx=new THREE.CanvasTexture(cv);tx.wrapS=tx.wrapT=THREE.RepeatWrapping;return tx;
+}
+function buildCharacterModel(skinIndex=0){
+  const skin=SKINS[skinIndex%SKINS.length],g=new THREE.Group();
+  const tex=skinTexture(skin);
+  const bodyMat=new THREE.MeshStandardMaterial({map:tex,roughness:.58,metalness:.02});
+  const accentMat=mat(skin.accent),dark=mat(0x172033);
+  const body=new THREE.Mesh(new THREE.CapsuleGeometry(.58,.72,10,18),bodyMat);body.position.y=.12;body.scale.set(1.05,1,1);g.add(body);
+  // Belly badge
+  const belly=new THREE.Mesh(new THREE.SphereGeometry(.37,18,12,0,Math.PI*2,0,Math.PI/2),accentMat);belly.position.set(0,.05,.48);belly.scale.set(1,.9,.22);g.add(belly);
+  // Face plate + eyes
+  const facePlate=new THREE.Mesh(new THREE.SphereGeometry(.45,18,12,0,Math.PI*2,0,Math.PI/2),dark);facePlate.position.set(0,.77,.43);facePlate.scale.set(1,.66,.18);g.add(facePlate);
+  for(const ex of [-.15,.15]){const eye=new THREE.Mesh(new THREE.SphereGeometry(.055,10,8),mat(0xffffff));eye.position.set(ex,.82,.515);g.add(eye);}
+  // Arms and feet
+  for(const side of [-1,1]){
+    const arm=new THREE.Mesh(new THREE.CapsuleGeometry(.12,.42,5,8),bodyMat);arm.position.set(side*.66,.12,.02);arm.rotation.z=side*.38;arm.name=side<0?'armL':'armR';g.add(arm);
+    const foot=new THREE.Mesh(new THREE.SphereGeometry(.2,12,8),dark);foot.position.set(side*.28,-.82,.08);foot.scale.set(1.25,.6,1.5);foot.name=side<0?'footL':'footR';g.add(foot);
+  }
+  // Accessory
+  if(skin.hat==='antenna'){
+    const stem=new THREE.Mesh(new THREE.CylinderGeometry(.035,.045,.38,8),accentMat);stem.position.y=1.42;g.add(stem);
+    const orb=new THREE.Mesh(new THREE.SphereGeometry(.12,12,8),accentMat);orb.position.y=1.64;g.add(orb);
+  }else if(skin.hat==='horns'){
+    for(const side of [-1,1]){const h=new THREE.Mesh(new THREE.ConeGeometry(.12,.42,10),accentMat);h.position.set(side*.3,1.35,0);h.rotation.z=side*.28;g.add(h);}
+  }else if(skin.hat==='crown'){
+    const crown=new THREE.Mesh(new THREE.CylinderGeometry(.28,.38,.3,5,1,false),mat(0xffd83d));crown.position.y=1.42;g.add(crown);
+  }else if(skin.hat==='ears'){
+    for(const side of [-1,1]){const e=new THREE.Mesh(new THREE.ConeGeometry(.16,.38,8),accentMat);e.position.set(side*.3,1.38,0);g.add(e);}
+  }
+  g.userData.skinIndex=skinIndex;return g;
+}
+function applyPlayerSkin(){
+  while(player.children.length)player.remove(player.children[0]);
+  const model=buildCharacterModel(selectedSkin);
+  while(model.children.length)player.add(model.children[0]);
+  player.userData.skinIndex=selectedSkin;
+}
+applyPlayerSkin();
 
 const roundLabel=document.getElementById('roundLabel');
 const timer=document.getElementById('timer');
@@ -277,14 +336,9 @@ function chooseTournament(){
   tournamentLevels=[races[0],mixed.find(x=>x!==races[0]),mixed.find(x=>x!==races[0]&&x!==mixed[0])||races[1],pick(FINAL_MAPS)];
 }
 
-function createBotModel(color){
-  const g=new THREE.Group();
-  const b=new THREE.Mesh(new THREE.CapsuleGeometry(.5,.68,6,12),mat(color));b.position.y=.1;g.add(b);
-  const h=new THREE.Mesh(new THREE.SphereGeometry(.44,16,12),mat(C.white));h.position.y=.82;g.add(h);
-  const visor=new THREE.Mesh(new THREE.BoxGeometry(.46,.15,.05),mat(C.navy));visor.position.set(0,.84,.42);g.add(visor);
-  return g;
+function createBotModel(skinIndex){
+  return buildCharacterModel(skinIndex);
 }
-
 
 function botLanding(bot,oldY,newY){
   const old=oldY-HALF,nw=newY-HALF;let best=null;
@@ -302,7 +356,7 @@ function spawnBots(){
   bots=[];finishOrder=[];playerPlace=null;
   const count=BOT_COUNT[levelIndex];
   for(let i=0;i<count;i++){
-    const group=createBotModel(BOT_COLORS[i%BOT_COLORS.length]);
+    const botSkin=(selectedSkin+1+i+Math.floor(Math.random()*(SKINS.length-1)))%SKINS.length;const group=createBotModel(botSkin);
     const angle=(i/count)*Math.PI*2;
     let pos;
     if(currentInfo.mode==='survival')pos=new THREE.Vector3(Math.cos(angle)*7,1.05,Math.sin(angle)*7);
@@ -456,8 +510,8 @@ function dots(){
 
 function showMenu(){
   overlay.style.display='flex';
-  card.innerHTML='<h1>☁️ SkySprint 3D</h1><p>20 original party-show maps: races, knockout rounds and 4 different finals. Each tournament randomly selects 3 regular rounds + 1 final.</p><button class="btn" id="startBtn">Start Tournament</button><p style="font-size:13px;opacity:.8">Build 5.1 • reliable AI navigation + recovery</p>';
-  document.getElementById('startBtn').onclick=()=>{levelIndex=0;tournamentStarted=true;chooseTournament();loadLevel();};
+  card.innerHTML='<h1>☁️ SkySprint 3D</h1><p>20 original party-show maps: races, knockout rounds and 4 different finals. Each tournament randomly selects 3 regular rounds + 1 final.</p><div class="skinrow"><b>Your skin:</b><select id="skinSelect">'+SKINS.map((x,i)=>'<option value="'+i+'" '+(i===selectedSkin?'selected':'')+'>'+x.name+'</option>').join('')+'</select></div><button class="btn" id="startBtn">Start Tournament</button><p style="font-size:13px;opacity:.8">Build 5.2 • character skins + accessories</p>';
+  document.getElementById('skinSelect').onchange=e=>{selectedSkin=Number(e.target.value);applyPlayerSkin();};document.getElementById('startBtn').onclick=()=>{levelIndex=0;tournamentStarted=true;chooseTournament();loadLevel();};
 }
 
 function showRoundIntro(info){
@@ -673,6 +727,11 @@ function update(dt,time){
     centerTitle.textContent=qualified?(currentInfo.final?'CROWN!':'QUALIFIED!'):'ELIMINATED';
     setTimeout(()=>qualified?showQualified(currentInfo):showEliminated(currentInfo),850);
   }
+  const moveMag=Math.min(1,Math.hypot(velocity.x,velocity.z)/SPEED);
+  const phase=performance.now()*.012;
+  const aL=player.getObjectByName('armL'),aR=player.getObjectByName('armR'),fL=player.getObjectByName('footL'),fR=player.getObjectByName('footR');
+  if(aL&&aR){aL.rotation.x=Math.sin(phase)*.45*moveMag;aR.rotation.x=-Math.sin(phase)*.45*moveMag;}
+  if(fL&&fR){fL.position.z=.08+Math.sin(phase)*.08*moveMag;fR.position.z=.08-Math.sin(phase)*.08*moveMag;}
   cam(dt);
 }
 
