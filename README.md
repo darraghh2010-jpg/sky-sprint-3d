@@ -2,7 +2,7 @@
 
 A lightweight 3D browser obstacle-racing game built with Three.js.
 
-## Build 3
+## Build 4
 The game now has a full tournament flow:
 
 - Main menu
@@ -21,6 +21,10 @@ The game now has a full tournament flow:
 - Moving platforms carry the player while standing on them
 - Grounded checkpoint pads so checkpoints are never floating over gaps
 - Dive move: Shift/F on keyboard or DIVE on mobile
+- 11 AI racers in solo mode
+- Different bot speeds, hesitations, and spinner mistakes
+- Live position counter
+- Position-based qualification: top 8, top 6, top 4, then win the final
 
 ## Controls
 - WASD / Arrow keys: move
