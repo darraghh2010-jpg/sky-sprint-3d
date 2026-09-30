@@ -1,9 +1,22 @@
 # SkySprint 3D
 
-A lightweight 3D browser obstacle-racing prototype built with Three.js.
+A lightweight 3D browser obstacle-racing game built with Three.js.
 
-## Play locally
-Open `index.html` from a static web server. The game imports Three.js from jsDelivr, so internet access is required.
+## Build 2
+The game now has a full tournament flow:
+
+- Main menu
+- 4-round tournament
+- Sky Dash
+- Bounce Bridge
+- Spinner Summit
+- Crown Climb FINAL
+- Qualification screens between rounds
+- Time-limit elimination
+- Checkpoints and respawning
+- Moving platforms and rotating knockback hazards
+- Keyboard and mobile controls
+- Champion screen after winning the final
 
 ## Controls
 - WASD / Arrow keys: move
@@ -15,14 +28,10 @@ Open `index.html` from a static web server. The game imports Three.js from jsDel
 ## Deploy on Vercel
 This project is static. Import the GitHub repository in Vercel and deploy with no build command. The included `vercel.json` routes requests to `index.html`.
 
-## Current prototype
-- Third-person 3D movement and camera
-- Jumping and gravity
-- Checkpoints and respawning
-- Rotating hazards with knockback
-- Moving platforms
-- Timer, countdown and finish state
-- Touch controls for phones/tablets
+If the repo is already connected to Vercel, pushes to `main` should trigger a new deployment automatically.
 
-## Next milestone
-Add private multiplayer rooms with an authoritative shared race state, player presence, synchronized transforms, lobby/ready flow, results and rematches.
+## Next milestones
+- AI opponents for solo tournaments
+- Player names and cosmetics
+- Private multiplayer rooms
+- More maps and finals
