@@ -2,7 +2,20 @@
 
 A lightweight 3D browser obstacle-racing game built with Three.js.
 
-## Build 5.2
+## Build 6
+
+Multiplayer rooms:
+- Private cross-device rooms with 6-character codes
+- Create Room / Join Room menu
+- Ready-up lobby
+- Host-only race start
+- Synced player skins
+- Live WebRTC player-position syncing
+- Multiplayer finish placement
+- Up to 8 human players in the room prototype
+- Solo tournament mode remains available
+
+Note: Build 6 rooms currently run a shared private race. Full synchronized multi-round knockout tournaments are a later multiplayer milestone.
 
 Character update:
 - 8 original character skins
