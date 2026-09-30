@@ -18,7 +18,7 @@ canvas{display:block;width:100%;height:100%}
 .card{width:min(700px,94vw);background:#111827dc;color:#fff;border:1px solid #ffffff25;border-radius:30px;padding:28px;box-shadow:0 30px 80px #0006;text-align:center;backdrop-filter:blur(18px)}
 .card h1{font-size:clamp(38px,8vw,72px);margin:0 0 8px}.card h2{font-size:clamp(28px,6vw,50px);margin:0 0 10px}.card p{font-size:16px;line-height:1.5;color:#e5e7eb}
 .btn{border:0;border-radius:18px;padding:14px 22px;font-size:18px;font-weight:1000;background:#fff;color:#111827;cursor:pointer;margin:8px}
-.btn.alt{background:#ffffff24;color:white;border:1px solid #ffffff35}.skinrow{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin:16px 0}.skinrow select{background:#ffffff18;color:#fff;border:1px solid #ffffff35;border-radius:14px;padding:10px 14px;font-weight:900;font-size:15px}.skinrow option{color:#111827}
+.btn.alt{background:#ffffff24;color:white;border:1px solid #ffffff35}.skinrow{display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap;margin:16px 0}.skinrow select{background:#ffffff18;color:#fff;border:1px solid #ffffff35;border-radius:14px;padding:10px 14px;font-weight:900;font-size:15px}.skinrow option{color:#111827}.roomrow{display:flex;gap:8px;justify-content:center;align-items:center;flex-wrap:wrap;margin:12px 0}.roomrow input{width:150px;text-transform:uppercase;background:#ffffff18;color:white;border:1px solid #ffffff35;border-radius:14px;padding:12px 14px;font-weight:1000;letter-spacing:2px;text-align:center}.players{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:16px 0;text-align:left}.playerchip{background:#ffffff14;border:1px solid #ffffff24;border-radius:14px;padding:10px 12px;font-weight:800}.ready{color:#6df56d}.notready{color:#ffd83d}
 #roundDots{display:flex;justify-content:center;gap:8px;margin:18px 0}.dot{width:13px;height:13px;border-radius:50%;background:#ffffff35}.dot.on{background:white}.dot.done{background:#6df56d}
 #mobile{position:fixed;inset:0;z-index:10;pointer-events:none;display:none}
 .dpad{position:absolute;left:18px;bottom:18px;width:156px;height:156px;pointer-events:auto}
@@ -54,6 +54,7 @@ canvas{display:block;width:100%;height:100%}
 
 <script type="module">
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js';
+import {joinRoom,selfId} from 'https://esm.run/trystero';
 
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0x87d7ff);
@@ -101,6 +102,9 @@ const SKINS=[
  {name:'Neon Ninja',a:0x20203a,b:0x6df56d,accent:0xff4fa3,pattern:'slash',hat:'ears'}
 ];
 let selectedSkin=0;
+let multiplayerMode=false,netRoom=null,netIsHost=false,netCode='',netReady=false,netActions=null;
+let netPeers={},remotePlayers={},mpFinishOrder=[],lastNetSend=0;
+const NET_APP='skysprint-3d-private-rooms-v1';
 const QUALIFY=[8,6,4,1],BOT_COUNT=[11,7,5,3];
 let levelIndex=0, tournamentStarted=false, started=false, finished=false, eliminated=false;
 let elapsed=0,last=performance.now(),checkpointIndex=0,cameraYaw=0,countdownToken=0;
@@ -161,6 +165,74 @@ function applyPlayerSkin(){
   player.userData.skinIndex=selectedSkin;
 }
 applyPlayerSkin();
+
+
+function makeRoomCode(){
+  const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let out='';
+  for(let i=0;i<6;i++)out+=chars[Math.floor(Math.random()*chars.length)];
+  return out;
+}
+function localProfile(){return {name:netIsHost?'Host':'Player',skin:selectedSkin,ready:netReady,host:netIsHost};}
+function humanCount(){return multiplayerMode?1+Object.keys(netPeers).length:1;}
+function roomMapByName(name){return [...REGULAR_MAPS,...FINAL_MAPS].find(x=>x.name===name);}
+function destroyRemote(peerId){
+  const g=remotePlayers[peerId];if(g){scene.remove(g);delete remotePlayers[peerId];}
+}
+function ensureRemote(peerId,skin=0){
+  if(remotePlayers[peerId])return remotePlayers[peerId];
+  const g=buildCharacterModel(skin);g.position.set(0,-50,0);scene.add(g);remotePlayers[peerId]=g;return g;
+}
+function renderRoomLobby(status=''){
+  overlay.style.display='flex';
+  const everyone=[{id:selfId,...localProfile()},...Object.entries(netPeers).map(([id,p])=>({id,...p}))];
+  const chips=everyone.map(p=>'<div class="playerchip">'+(p.host?'👑 ':'')+(p.id===selfId?'You':(p.name||'Player'))+' <span class="'+(p.ready?'ready':'notready')+'">'+(p.ready?'READY':'NOT READY')+'</span></div>').join('');
+  const canStart=netIsHost&&everyone.length>=2&&everyone.every(p=>p.ready);
+  card.innerHTML='<h2>PRIVATE ROOM</h2><h1 style="font-size:54px;letter-spacing:6px">'+netCode+'</h1><p>Share this code with your friends. Up to 8 human players.</p><div class="players">'+chips+'</div>'+(status?'<p>'+status+'</p>':'')+'<button class="btn '+(netReady?'alt':'')+'" id="readyBtn">'+(netReady?'Unready':'Ready Up')+'</button>'+(netIsHost?'<button class="btn" id="hostStart" '+(canStart?'':'disabled')+'>Start Race</button>':'<p>Waiting for the host to start…</p>')+'<button class="btn alt" id="leaveRoom">Leave Room</button>';
+  document.getElementById('readyBtn').onclick=()=>{netReady=!netReady;netActions?.ready.send({ready:netReady,skin:selectedSkin});renderRoomLobby();};
+  if(netIsHost)document.getElementById('hostStart').onclick=()=>{if(canStart)startMultiplayerRace();};
+  document.getElementById('leaveRoom').onclick=leaveRoom;
+}
+function setupRoom(code,host){
+  if(netRoom)netRoom.leave();
+  netCode=code.toUpperCase();netIsHost=host;netReady=false;netPeers={};mpFinishOrder=[];multiplayerMode=true;
+  netRoom=joinRoom({appId:NET_APP,password:netCode},netCode);
+  const info=netRoom.makeAction('profile'),ready=netRoom.makeAction('ready'),start=netRoom.makeAction('start'),state=netRoom.makeAction('state'),finish=netRoom.makeAction('finish');
+  netActions={info,ready,start,state,finish};
+  info.onMessage=(p,{peerId})=>{netPeers[peerId]={...(netPeers[peerId]||{}),...p};renderRoomLobby();};
+  ready.onMessage=(p,{peerId})=>{netPeers[peerId]={...(netPeers[peerId]||{}),...p};renderRoomLobby();};
+  start.onMessage=(data)=>{if(netIsHost)return;const meta=roomMapByName(data.map);if(!meta)return;tournamentLevels=[meta];levelIndex=0;netReady=false;loadLevel(true);};
+  state.onMessage=(st,{peerId})=>{
+    if(!remotePlayers[peerId])ensureRemote(peerId,st.skin??netPeers[peerId]?.skin??0);
+    const g=remotePlayers[peerId];g.userData.netTarget=st;
+  };
+  finish.onMessage=(data,{peerId})=>{if(!mpFinishOrder.includes(peerId))mpFinishOrder.push(peerId);};
+  netRoom.onPeerJoin=peerId=>{
+    netPeers[peerId]={name:'Player',skin:0,ready:false,host:false};
+    info.send(localProfile(),{target:peerId});
+    renderRoomLobby();
+  };
+  netRoom.onPeerLeave=peerId=>{delete netPeers[peerId];destroyRemote(peerId);renderRoomLobby('A player left the room.');};
+  renderRoomLobby(host?'Room created — waiting for players.':'Joining room…');
+}
+function leaveRoom(){
+  if(netRoom)netRoom.leave();netRoom=null;netActions=null;multiplayerMode=false;netPeers={};netCode='';netReady=false;mpFinishOrder=[];
+  Object.keys(remotePlayers).forEach(destroyRemote);showMenu();
+}
+function startMultiplayerRace(){
+  const races=REGULAR_MAPS.filter(x=>x.mode==='race'),meta=pick(races);
+  tournamentLevels=[meta];levelIndex=0;mpFinishOrder=[];netActions.start.send({map:meta.name});loadLevel(true);
+}
+function sendNetState(now){
+  if(!multiplayerMode||!netActions||!started||now-lastNetSend<70)return;
+  lastNetSend=now;netActions.state.send({x:player.position.x,y:player.position.y,z:player.position.z,ry:player.rotation.y,rx:player.rotation.x,skin:selectedSkin});
+}
+function updateRemotePlayers(dt){
+  for(const [id,g] of Object.entries(remotePlayers)){
+    const t=g.userData.netTarget;if(!t)continue;
+    const target=new THREE.Vector3(t.x,t.y,t.z);g.position.lerp(target,1-Math.exp(-16*dt));
+    g.rotation.y=THREE.MathUtils.damp(g.rotation.y,t.ry||0,14,dt);g.rotation.x=THREE.MathUtils.damp(g.rotation.x,t.rx||0,14,dt);
+  }
+}
 
 const roundLabel=document.getElementById('roundLabel');
 const timer=document.getElementById('timer');
@@ -354,6 +426,7 @@ function botNearestRouteIndex(route,z){
 }
 function spawnBots(){
   bots=[];finishOrder=[];playerPlace=null;
+  if(multiplayerMode)return;
   const count=BOT_COUNT[levelIndex];
   for(let i=0;i<count;i++){
     const botSkin=(selectedSkin+1+i+Math.floor(Math.random()*(SKINS.length-1)))%SKINS.length;const group=createBotModel(botSkin);
@@ -493,6 +566,11 @@ function updateBots(dt){
   for(const bot of bots){if(currentInfo.mode==='survival')updateSurvivalBot(bot,dt);else updateRaceBot(bot,dt);}
 }
 function updateRank(){
+  if(multiplayerMode){
+    const peers=Object.values(remotePlayers).filter(g=>g.userData.netTarget);
+    const ahead=peers.filter(g=>g.userData.netTarget.z<player.position.z-1.2).length;
+    rank.textContent=(ahead+1)+' / '+humanCount();return;
+  }
   if(currentInfo?.mode==='survival'){
     const alive=bots.filter(b=>b.alive).length+(eliminated?0:1);rank.textContent='Alive '+alive+' / '+(BOT_COUNT[levelIndex]+1);return;
   }
@@ -510,8 +588,11 @@ function dots(){
 
 function showMenu(){
   overlay.style.display='flex';
-  card.innerHTML='<h1>☁️ SkySprint 3D</h1><p>20 original party-show maps: races, knockout rounds and 4 different finals. Each tournament randomly selects 3 regular rounds + 1 final.</p><div class="skinrow"><b>Your skin:</b><select id="skinSelect">'+SKINS.map((x,i)=>'<option value="'+i+'" '+(i===selectedSkin?'selected':'')+'>'+x.name+'</option>').join('')+'</select></div><button class="btn" id="startBtn">Start Tournament</button><p style="font-size:13px;opacity:.8">Build 5.2 • character skins + accessories</p>';
-  document.getElementById('skinSelect').onchange=e=>{selectedSkin=Number(e.target.value);applyPlayerSkin();};document.getElementById('startBtn').onclick=()=>{levelIndex=0;tournamentStarted=true;chooseTournament();loadLevel();};
+  card.innerHTML='<h1>☁️ SkySprint 3D</h1><p>20 original party-show maps with solo tournaments and private multiplayer rooms.</p><div class="skinrow"><b>Your skin:</b><select id="skinSelect">'+SKINS.map((x,i)=>'<option value="'+i+'" '+(i===selectedSkin?'selected':'')+'>'+x.name+'</option>').join('')+'</select></div><button class="btn" id="startBtn">Solo Tournament</button><hr style="border-color:#ffffff20;margin:18px 0"><h2 style="font-size:28px">PRIVATE ROOMS</h2><div class="roomrow"><button class="btn" id="createRoom">Create Room</button><input id="roomInput" maxlength="6" placeholder="CODE"><button class="btn alt" id="joinRoomBtn">Join Room</button></div><p style="font-size:13px;opacity:.8">Build 6 • private cross-device rooms</p>';
+  document.getElementById('skinSelect').onchange=e=>{selectedSkin=Number(e.target.value);applyPlayerSkin();};
+  document.getElementById('startBtn').onclick=()=>{multiplayerMode=false;levelIndex=0;tournamentStarted=true;chooseTournament();loadLevel();};
+  document.getElementById('createRoom').onclick=()=>setupRoom(makeRoomCode(),true);
+  document.getElementById('joinRoomBtn').onclick=()=>{const code=document.getElementById('roomInput').value.trim().toUpperCase();if(code.length===6)setupRoom(code,false);else flash('Enter a 6-character room code');};
 }
 
 function showRoundIntro(info){
@@ -541,7 +622,7 @@ function showEliminated(info){
   document.getElementById('menuBtn').onclick=showMenu;
 }
 
-function loadLevel(){
+function loadLevel(networkStart=false){
   countdownToken++;
   clearWorld();
   started=false;finished=false;eliminated=false;elapsed=0;checkpointIndex=0;velocity.set(0,0,0);cameraYaw=0;
@@ -549,10 +630,10 @@ function loadLevel(){
   if(!tournamentLevels.length)chooseTournament();
   const meta=tournamentLevels[levelIndex],info=meta.fn();
   currentInfo=info; spawn.copy(info.spawn); player.position.copy(spawn); grounded=false;
-  spawnBots();rank.textContent=currentInfo.mode==='survival'?'Alive '+(BOT_COUNT[levelIndex]+1)+' / '+(BOT_COUNT[levelIndex]+1):'1 / '+(BOT_COUNT[levelIndex]+1);
-  roundLabel.textContent=(info.final?'FINAL • ':'Round '+(levelIndex+1)+' • ')+info.name;
+  spawnBots();rank.textContent=multiplayerMode?'1 / '+humanCount():(currentInfo.mode==='survival'?'Alive '+(BOT_COUNT[levelIndex]+1)+' / '+(BOT_COUNT[levelIndex]+1):'1 / '+(BOT_COUNT[levelIndex]+1));
+  roundLabel.textContent=(multiplayerMode?'ROOM '+netCode+' • ':'')+(info.final?'FINAL • ':'Round '+(levelIndex+1)+' • ')+info.name;
   camera.position.set(0,6,15); camera.lookAt(player.position);
-  showRoundIntro(info);
+  if(multiplayerMode&&networkStart){overlay.style.display='none';startCountdown();}else showRoundIntro(info);
 }
 
 let currentInfo=null;
@@ -645,6 +726,7 @@ function update(dt,time){
     if(grounded&&groundedOn&&groundedOn.mesh===m.mesh)moveAxis(m.axis,delta);
   }
   for(const s of spinners)s.pivot.rotation.y+=s.speed*dt;
+  updateRemotePlayers(dt);
   diveCooldown=Math.max(0,diveCooldown-dt);diveTimer=Math.max(0,diveTimer-dt);if(diving&&diveTimer<=0)diving=false;
   player.rotation.x=THREE.MathUtils.damp(player.rotation.x,diving?-.95:0,12,dt);
   if(!started||finished||eliminated){cam(dt);return;}
@@ -721,6 +803,13 @@ function update(dt,time){
   }
 
   if(currentInfo.mode==='race'&&finishZone&&player.position.z<finishZone.z&&Math.abs(player.position.x-finishZone.x)<finishZone.width&&player.position.y>finishZone.minY){
+    if(multiplayerMode){
+      if(!mpFinishOrder.includes(selfId))mpFinishOrder.push(selfId);
+      netActions?.finish.send({time:elapsed});
+      playerPlace=mpFinishOrder.indexOf(selfId)+1;finished=true;started=false;centerTitle.textContent='FINISHED #'+playerPlace;
+      setTimeout(()=>{overlay.style.display='flex';card.innerHTML='<h1>🏁 FINISHED #'+playerPlace+'</h1><p>Your time: <b>'+fmt(elapsed)+'</b></p><p>Room '+netCode+'</p><button class="btn" id="backLobby">Back to Lobby</button>';document.getElementById('backLobby').onclick=()=>renderRoomLobby();},850);
+      cam(dt);return;
+    }
     playerPlace=finishOrder.length+1;finishOrder.push({type:'player',time:elapsed});updateRank();
     finished=true;started=false;
     const qualified=playerPlace<=QUALIFY[levelIndex];
@@ -732,6 +821,7 @@ function update(dt,time){
   const aL=player.getObjectByName('armL'),aR=player.getObjectByName('armR'),fL=player.getObjectByName('footL'),fR=player.getObjectByName('footR');
   if(aL&&aR){aL.rotation.x=Math.sin(phase)*.45*moveMag;aR.rotation.x=-Math.sin(phase)*.45*moveMag;}
   if(fL&&fR){fL.position.z=.08+Math.sin(phase)*.08*moveMag;fR.position.z=.08-Math.sin(phase)*.08*moveMag;}
+  sendNetState(performance.now());
   cam(dt);
 }
 
